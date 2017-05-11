@@ -6,5 +6,7 @@ Setup MEM according to https://twiki.cern.ch/twiki/bin/viewauth/CMS/IPHCMEMCPP
 Change the include path in Makefile to the MEM you installed
 
 make
+
 cd test
+
 ./test
