@@ -289,6 +289,7 @@ void NN_MEM::doTraining(){
 	cout<<endl;
 
 	const double *xs = minimizer->X();
+	par.clear();
 	for(int l=0; l<total; l++){
 		par.push_back(xs[l]);
 	}
