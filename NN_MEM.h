@@ -45,6 +45,9 @@ using namespace std;
 #include "Math/AllIntegrationTypes.h"
 #include "Math/AdaptiveIntegratorMultiDim.h"
 
+// for GSLSimAnMinimizer
+#include "Math/GSLSimAnMinimizer.h"
+
 class NN_MEM{
 	public:
 		TString Filename;
@@ -87,7 +90,10 @@ class NN_MEM{
 
 		TString configFile;
 
+		TString MinimizationType;
+		TString FileInit;
 		ROOT::Minuit2::Minuit2Minimizer* minimizer;
+		ROOT::Math::GSLSimAnMinimizer * min;
 
 		NN_MEM(TString File, TString outfilename, TString label_, TString configFile_);
 		virtual void SetNLayer(int nlayer);
@@ -103,6 +109,9 @@ class NN_MEM{
 		void SetXLXU(vector<double>* xL_, vector<double>* xU_){xL=xL_; xU=xU_;}
 		void SetMinMax(vector<double>* min, vector<double>* max){var_max_int=max; var_min_int=min;}
 		void SetModeCat(int kMode_, int kCatJets_){kMode=kMode_; kCatJets=kCatJets_;}
+
+		void SetMinimizationType(TString type){MinimizationType=type; cout<<"MinimizationType="<<MinimizationType<<endl;}
+		void SetFileInit(TString weightInit){FileInit=weightInit; cout<<"Init from file: "<<FileInit<<endl;}
 
 		void AddOtherFiles(TString other, TString label){Filename_other[nOther]=other; Filelabel_other[nOther]=label; nOther++; cout<<"will eval also on "<<other<<endl;}
 
@@ -144,6 +153,11 @@ NN_MEM::NN_MEM(TString File, TString outfilename, TString label_, TString config
 
 	minimizer = new ROOT::Minuit2::Minuit2Minimizer( ROOT::Minuit2::kMigrad );
 	minimizer->SetPrintLevel(0);
+
+	min = new ROOT::Math::GSLSimAnMinimizer();
+
+	MinimizationType="Minuit2Minimizer";
+	FileInit="weightInit.txt";
 }
 
 void NN_MEM::SetNLayer(int nlayer){
@@ -198,6 +212,7 @@ void NN_MEM::InitParameters(){
 		}
 	}
 	total=index;
+	cout<<"total "<<total<<" weights"<<endl;
 
 	theEval = new NN_MEM_Eval(Filename, configFile, weight_init, NeuronType, nLayer, nNodes);
 	theEval->SetCut(cut);
@@ -272,15 +287,26 @@ void NN_MEM::doTraining(){
 	//cout<<"average_discriminant_nlog="<<average_discriminant_nlog<<endl;
 
 	ROOT::Math::Functor FunctorHyp(theEval, &NN_MEM_Eval::Eval_logAvg, total);
-	minimizer->SetFunction(FunctorHyp);
-	if(nEpochs>0)minimizer->SetMaxFunctionCalls(nEpochs);
-	minimizer->SetPrintLevel(1);
-	for(int i=0; i<total; i++)
-		//minimizer->SetVariable(i,Form("%d", i), init_par[i], 0.002);
-		//minimizer->SetVariable(i,Form("%d", i), init_par[i], 0.005);
-		minimizer->SetVariable(i,Form("%d", i), init_par[i], 0.01);
-	bool isSuccess=minimizer->Minimize();
-	cout<<"isSuccess="<<isSuccess<<endl;
+	if(MinimizationType=="Minuit2Minimizer"){
+		minimizer->SetFunction(FunctorHyp);
+		if(nEpochs>0)minimizer->SetMaxFunctionCalls(nEpochs);
+		minimizer->SetPrintLevel(1);
+		for(int i=0; i<total; i++)
+			minimizer->SetVariable(i,Form("%d", i), init_par[i], 0.01);
+		bool isSuccess=minimizer->Minimize();
+		cout<<"isSuccess="<<isSuccess<<endl;
+	}
+	if(MinimizationType=="GSLSimAnMinimizer"){
+		cout<<"Minimize with GSLSimAnMinimizer"<<endl;
+		min->SetMaxFunctionCalls(1000);
+		min->SetMaxIterations(100);
+		min->SetTolerance(0.001);
+		min->SetFunction(FunctorHyp);
+		for(int i=0; i<total; i++)
+			min->SetVariable(i,Form("%d", i), init_par[i], 0.01);
+		bool isSuccess=min->Minimize();
+		cout<<"isSuccess="<<isSuccess<<endl;
+	}
 
 	finish = clock();
 	duration = (double)(finish-start)/CLOCKS_PER_SEC;
@@ -288,7 +314,11 @@ void NN_MEM::doTraining(){
 	cout<<"duration="<<duration<<" sec"<<endl;
 	cout<<endl;
 
-	const double *xs = minimizer->X();
+	const double *xs;
+	if(MinimizationType=="Minuit2Minimizer")
+		xs = minimizer->X();
+	if(MinimizationType=="GSLSimAnMinimizer")
+		xs = min->X();
 	par.clear();
 	for(int l=0; l<total; l++){
 		par.push_back(xs[l]);
@@ -325,12 +355,27 @@ void NN_MEM::Eval_Multi(int N){
 	start = clock();
 
 	double par_test[total];
-	for(int n_init=0; n_init<N; n_init++){
-		cout<<"try "<<n_init<<endl;
-		for(int i=0;i<total;i++)
-			par_test[i]=2*gRandom->Rndm()-1;
-		double average_discriminant_nlog=theEval->Eval_logAvg(par_test);
-		cout<<"average_discriminant_nlog="<<average_discriminant_nlog<<endl;
+	if(N>=1){
+		for(int n_init=0; n_init<N; n_init++){
+			cout<<"try "<<n_init<<endl;
+			for(int i=0;i<total;i++)
+				par_test[i]=2*gRandom->Rndm()-1;
+			double average_discriminant_nlog=theEval->Eval_logAvg(par_test);
+			cout<<"average_discriminant_nlog="<<average_discriminant_nlog<<endl;
+			//cout<<"num_notZero="<<theEval->num_notZero<<endl;
+		}
+	}
+	else{
+		int n_init=0;
+		do{
+			cout<<"try "<<n_init<<endl;
+			for(int i=0;i<total;i++)
+				par_test[i]=2*gRandom->Rndm()-1;
+			double average_discriminant_nlog=theEval->Eval_logAvg(par_test);
+			cout<<"average_discriminant_nlog="<<average_discriminant_nlog<<endl;
+			//cout<<"num_notZero="<<theEval->num_notZero<<endl;
+			n_init++;
+		} while (theEval->num_notZero < 150 || n_init < 5000);
 	}
 
 	finish = clock();
@@ -361,9 +406,10 @@ void NN_MEM::Eval_Tree(){
 
 void NN_MEM::myana(){
 	InitParameters();
-	InitFromFile("weightInit.txt");
+	InitFromFile(FileInit);
 	doTraining();
-	//Eval_Multi(1000);
+	//Eval_Multi(10000);
+	//Eval_Multi(-1);
 	Eval_Tree();
 }
 
